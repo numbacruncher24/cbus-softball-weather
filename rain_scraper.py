@@ -3,45 +3,48 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-def get_full_sheet_text():
+def capture_sheet_screenshot():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={'width': 1280, 'height': 800})
+        # We use a tall viewport to capture the whole list
+        page = browser.new_page(viewport={'width': 1000, 'height': 1200})
+        
         try:
+            # 1. Load the page
             page.goto("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", wait_until="networkidle")
+            
+            # 2. Find the iframe and wait for it to be visible
             page.wait_for_selector("iframe")
-            frame = page.frame_locator("iframe").first
+            frame_handle = page.query_selector("iframe")
             
-            # Wait for the data to load
-            frame.get_by_text("Sports").wait_for(state="visible", timeout=20000)
+            # 3. Take a screenshot of just that iframe element
+            # We add a 5s sleep to ensure the spreadsheet data actually 'pops in'
+            time.sleep(5)
+            frame_handle.screenshot(path="status_screenshot.png")
             
-            # Grab EVERYTHING inside the sheet
-            full_content = frame.locator("body").inner_text()
             browser.close()
-            return full_content
+            return True
         except Exception as e:
+            print(f"Error: {e}")
             if browser: browser.close()
-            return f"⚠️ Error loading sheet: {e}"
+            return False
 
 if __name__ == "__main__":
     WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
-    MESSAGE_ID = os.getenv('MESSAGE_ID')
     
-    all_text = get_full_sheet_text()
-
-    # Discord has a 2000 character limit per message
-    # We trim it just in case the sheet is massive
-    content = (
-        "🏟️ **FULL FIELD STATUS SHEET**\n"
-        f"Last Checked: <t:{int(time.time())}:R>\n"
-        "```\n"
-        f"{all_text[:1500]}" 
-        "\n```"
-    )
-
-    if MESSAGE_ID:
-        requests.patch(f"{WEBHOOK_URL}/messages/{MESSAGE_ID}", json={"content": content})
-    else:
-        r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
+    if capture_sheet_screenshot():
+        # Prepare the Discord Message
+        payload = {
+            "content": f"🏟️ **LATEST FIELD STATUS SHEET**\nLast Checked: <t:{int(time.time())}:R>"
+        }
+        
+        # Upload the actual image file to Discord
+        with open("status_screenshot.png", "rb") as f:
+            files = {"file": ("status_screenshot.png", f)}
+            r = requests.post(WEBHOOK_URL, data=payload, files=files)
+            
         if r.status_code == 200:
-            print(f"New Message ID: {r.json()['id']}")
+            print("Screenshot posted successfully!")
+    else:
+        # Fallback if screenshot fails
+        requests.post(WEBHOOK_URL, json={"content": "⚠️ **Update:** Failed to capture the status sheet. [Check Manually](https://columbusrecparks.com/facilities/rentals/sports/field-conditions/)"})
