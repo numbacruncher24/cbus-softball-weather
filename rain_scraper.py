@@ -12,23 +12,22 @@ MY_PARKS = [
 ]
 
 def get_park_data():
-    # Start Playwright
     with sync_playwright() as p:
-        # Launch browser (headless = no window)
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
         try:
-            # 1. Go to the main page
+            # 1. Load the page
             page.goto("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", wait_until="networkidle")
             
-            # 2. WAIT for the Google Doc iframe to load its content
-            # We wait for the text "Sports" to appear inside the frame
-            page.wait_for_timeout(5000) # 5-second buffer for slow loads
+            # 2. Wait specifically for the iframe (the Google Doc) to appear
+            page.wait_for_selector("iframe")
             
-            # 3. Get all text from the page (including inside the iframe)
-            # Playwright handles the 'frame' barrier automatically here
-            content = page.locator("body").inner_text()
+            # 3. Target the iframe specifically to ignore the main website's "Trails" headers
+            frame = page.frame_locator("iframe")
+            
+            # Get the text ONLY from inside that frame
+            content = frame.locator("body").inner_text()
             lines = [line.strip() for line in content.split('\n') if line.strip()]
             
             browser.close()
@@ -37,14 +36,15 @@ def get_park_data():
             for park in MY_PARKS:
                 for i, line in enumerate(lines):
                     if park.lower() in line.lower():
-                        # The status is usually the next line
+                        # The status in a Google Doc is usually the very next line
                         if i + 1 < len(lines):
                             status_text = lines[i+1]
                             
-                            # Emoji Logic
-                            if any(word in status_text.upper() for word in ["OPEN", "SCHEDULED"]):
+                            # Standardized Emoji Logic
+                            status_upper = status_text.upper()
+                            if "OPEN" in status_upper or "SCHEDULED" in status_upper:
                                 emoji = "🟢"
-                            elif any(word in status_text.upper() for word in ["CLOSED", "SEASON"]):
+                            elif "CLOSED" in status_upper or "SEASON" in status_upper:
                                 emoji = "🔴"
                             else:
                                 emoji = "🟡"
@@ -55,7 +55,7 @@ def get_park_data():
             return "\n".join(results)
             
         except Exception as e:
-            browser.close()
+            if browser: browser.close()
             return f"⚠️ Scraper Error: {e}"
 
 if __name__ == "__main__":
@@ -63,31 +63,26 @@ if __name__ == "__main__":
     MESSAGE_ID = os.getenv('MESSAGE_ID')
     
     if not WEBHOOK_URL:
-        print("Missing DISCORD_WEBHOOK secret.")
+        print("Error: Set DISCORD_WEBHOOK in GitHub Secrets")
         exit()
 
     park_summary = get_park_data()
     
+    # Final Fallback if nothing is found
     if not park_summary:
-        park_summary = "⚠️ **Update:** No park data found. The website might be undergoing maintenance."
+        park_summary = "⚠️ **Update:** Parks data is currently loading or unavailable."
 
-    # Final Discord Message
+    current_time = int(time.time())
     content = (
         "🏟️ **LIVE FIELD CONDITIONS**\n"
-        f"Last Checked: <t:{int(time.time())}:R>\n\n"
+        f"Last Checked: <t:{current_time}:R>\n\n"
         f"{park_summary}\n\n"
         "🔗 [Official Status Page](https://columbusrecparks.com/facilities/rentals/sports/field-conditions/)"
     )
 
-    # Webhook Logic
     if MESSAGE_ID:
-        # Update existing message
-        url = f"{WEBHOOK_URL}/messages/{MESSAGE_ID}"
-        requests.patch(url, json={"content": content})
+        requests.patch(f"{WEBHOOK_URL}/messages/{MESSAGE_ID}", json={"content": content})
     else:
-        # Post new message and print ID
-        url = f"{WEBHOOK_URL}?wait=true"
-        r = requests.post(url, json={"content": content})
+        r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
         if r.status_code == 200:
             print(f"SUCCESS! New Message ID: {r.json()['id']}")
-            print("Copy this ID into your GitHub Secrets as MESSAGE_ID")
