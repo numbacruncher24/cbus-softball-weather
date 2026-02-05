@@ -11,26 +11,23 @@ MY_PARKS = [
     "Spindler Road Park"
 ]
 
+# This is the direct 'Publish to Web' link for the Google Doc
+DOC_URL = "https://docs.google.com/document/d/e/2PACX-1vT5K8nL7Bf1_fR_YJ-Xo-U0o5X8nL7Bf1_fR_YJ-Xo-U0o5X8/pub?embedded=true"
+
 def get_park_data():
     with sync_playwright() as p:
-        # Launch the browser
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
         try:
-            # 1. Go to the main page
-            page.goto("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", wait_until="networkidle")
+            # Go directly to the Google Doc source
+            page.goto(DOC_URL, wait_until="networkidle")
             
-            # 2. Focus on the iframe where the Google Doc lives
-            # This ignores the "Trails" and "Athletics" headers on the main site
-            frame_element = page.frame_locator("iframe")
+            # Wait for the text to actually appear on the page
+            page.wait_for_selector("text=Berliner", timeout=15000)
             
-            # 3. Wait for the Google Doc content to load inside that frame
-            # We wait for a park name to be visible inside the iframe
-            frame_element.get_by_text("Berliner").wait_for(timeout=10000)
-            
-            # 4. Extract the text from ONLY the Google Doc
-            content = frame_element.locator("body").inner_text()
+            # Get all text from the document
+            content = page.locator("body").inner_text()
             lines = [line.strip() for line in content.split('\n') if line.strip()]
             
             browser.close()
@@ -38,16 +35,16 @@ def get_park_data():
             results = []
             for park in MY_PARKS:
                 for i, line in enumerate(lines):
+                    # Partial match to be safe
                     if park.lower() in line.lower():
-                        # The status is usually the next line in the Google Doc
                         if i + 1 < len(lines):
                             status_text = lines[i+1]
                             
-                            # Emoji Logic
+                            # Emoji Logic based on your image keywords
                             status_upper = status_text.upper()
-                            if any(word in status_upper for word in ["OPEN", "SCHEDULED"]):
+                            if "SCHEDULED" in status_upper or "OPEN" in status_upper:
                                 emoji = "🟢"
-                            elif any(word in status_upper for word in ["CLOSED", "SEASON"]):
+                            elif "CLOSED" in status_upper or "SEASON" in status_upper:
                                 emoji = "🔴"
                             else:
                                 emoji = "🟡"
@@ -58,22 +55,17 @@ def get_park_data():
             return "\n".join(results)
             
         except Exception as e:
-            browser.close()
-            return f"⚠️ Scraper Error: {e}"
+            if browser: browser.close()
+            return None # Trigger the 'unreachable' message if it fails
 
 if __name__ == "__main__":
     WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
     MESSAGE_ID = os.getenv('MESSAGE_ID')
     
-    if not WEBHOOK_URL:
-        print("Error: DISCORD_WEBHOOK secret is missing.")
-        exit()
-
     park_summary = get_park_data()
     
-    # Final Fallback
     if not park_summary:
-        park_summary = "⚠️ **Update:** No park data found. The website might be loading slowly."
+        park_summary = "⚠️ **Update:** The city's status document is currently unreachable. [Check Manually](https://columbusrecparks.com/facilities/rentals/sports/field-conditions/)"
 
     content = (
         "🏟️ **LIVE FIELD CONDITIONS**\n"
