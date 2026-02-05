@@ -3,17 +3,7 @@ from bs4 import BeautifulSoup
 import os
 import time
 
-# 1. Config
-URL = "https://columbusrecparks.com/facilities/rentals/sports/field-conditions/"
-WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
-# You'll get this ID after the first run (see instructions below)
-MESSAGE_ID = os.getenv('MESSAGE_ID') 
-
-import requests
-from bs4 import BeautifulSoup
-import time
-
-# 1. Exact list from your screenshot
+# 1. Config - These must match the website text exactly
 MY_PARKS = [
     "Anheuser-Busch Sports Park",
     "Cooper Sports Park",
@@ -21,38 +11,37 @@ MY_PARKS = [
     "Spindler Road Park"
 ]
 
-def get_park_data():
+def get_field_status():
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        r = requests.get("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", headers=headers)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        updates = []
+        response = requests.get("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # We loop through the page text and look for our specific parks
-        page_text = soup.get_text(separator="\n")
-        lines = [line.strip() for line in page_text.split("\n") if line.strip()]
-
+        results = []
+        # We look for the park name, then find its "sibling" (the status text)
         for park in MY_PARKS:
-            for i, line in enumerate(lines):
-                if park in line:
-                    # The status is usually the very next line on this website
-                    if i + 1 < len(lines):
-                        status_text = lines[i+1]
+            # Find the element containing the park name
+            park_element = soup.find(string=lambda t: park in t if t else False)
+            
+            if park_element:
+                # Get the next text block (which is the status)
+                status_block = park_element.find_next()
+                if status_block:
+                    status_text = status_block.get_text(strip=True)
+                    
+                    # Choose Emoji
+                    if "Open" in status_text or "as scheduled" in status_text:
+                        emoji = "🟢"
+                    elif "CLOSED" in status_text or "Closed" in status_text:
+                        emoji = "🔴"
+                    else:
+                        emoji = "🟡" # For TBD or Seasonal updates
                         
-                        # Set Emojis based on status keywords
-                        if "Open" in status_text or "as scheduled" in status_text:
-                            emoji = "🟢"
-                        elif "Closed" in status_text or "CLOSED" in status_text:
-                            emoji = "🔴"
-                        else:
-                            emoji = "🟡" # For "TBD" or "Delayed"
-                            
-                        updates.append(f"{emoji} **{park}**: {status_text}")
-                    break # Stop looking for this park once found
+                    results.append(f"{emoji} **{park}**: {status_text}")
 
-        return "\n".join(updates)
+        return "\n".join(results) if results else "⚠️ No matching parks found on site."
     except Exception as e:
-        return f"⚠️ Error: {e}"
+        return f"⚠️ Scraper Error: {e}"
 
 # 2. Prepare Payload
 content = f"🏟️ **LIVE C-BUS FIELD CONDITIONS**\n*Last Updated: <t:{int(time.time())}:R>*\n\n{get_park_data()}\n\n🔗 [Official Page]({URL})"
@@ -67,4 +56,5 @@ else:
     r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
 
     print(f"FIRST RUN: Copy this ID and add it to GitHub Secrets as MESSAGE_ID: {r.json()['id']}")
+
 
