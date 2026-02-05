@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
 
 # The 4 parks from your image
 MY_PARKS = [
@@ -11,52 +11,38 @@ MY_PARKS = [
     "Spindler Road Park"
 ]
 
-# This is the direct 'Publish to Web' link for the Google Doc
-DOC_URL = "https://docs.google.com/document/d/e/2PACX-1vT5K8nL7Bf1_fR_YJ-Xo-U0o5X8nL7Bf1_fR_YJ-Xo-U0o5X8/pub?embedded=true"
+# The NEW Google Sheets URL you provided
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTt2lqkwmk7MgbpvKaI3H1GiQVDFfyNOyKNM9Yri13LHDxhlCzVDvd-AdvejoxsB2mZHyUIMQkjlpxK/pubhtml?widget=true&headers=false"
 
 def get_park_data():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        response = requests.get(SHEET_URL, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        try:
-            # Go directly to the Google Doc source
-            page.goto(DOC_URL, wait_until="networkidle")
-            
-            # Wait for the text to actually appear on the page
-            page.wait_for_selector("text=Berliner", timeout=15000)
-            
-            # Get all text from the document
-            content = page.locator("body").inner_text()
-            lines = [line.strip() for line in content.split('\n') if line.strip()]
-            
-            browser.close()
-            
-            results = []
-            for park in MY_PARKS:
-                for i, line in enumerate(lines):
-                    # Partial match to be safe
-                    if park.lower() in line.lower():
-                        if i + 1 < len(lines):
-                            status_text = lines[i+1]
+        # Google Sheets published as HTML use <td> tags for cells
+        cells = [td.get_text(strip=True) for td in soup.find_all('td')]
+        
+        results = []
+        for park in MY_PARKS:
+            for i, cell_text in enumerate(cells):
+                if park.lower() in cell_text.lower():
+                    # In this specific sheet, the status is usually in the cell directly below 
+                    # or next to the park name. We'll look at the next 2 cells.
+                    for offset in range(1, 3):
+                        if i + offset < len(cells):
+                            status_candidate = cells[i + offset]
+                            status_upper = status_candidate.upper()
                             
-                            # Emoji Logic based on your image keywords
-                            status_upper = status_text.upper()
-                            if "SCHEDULED" in status_upper or "OPEN" in status_upper:
-                                emoji = "🟢"
-                            elif "CLOSED" in status_upper or "SEASON" in status_upper:
-                                emoji = "🔴"
-                            else:
-                                emoji = "🟡"
-                            
-                            results.append(f"{emoji} **{park}**: {status_text}")
-                        break
-            
-            return "\n".join(results)
-            
-        except Exception as e:
-            if browser: browser.close()
-            return None # Trigger the 'unreachable' message if it fails
+                            if any(word in status_upper for word in ["OPEN", "CLOSED", "SCHEDULED", "SEASON"]):
+                                emoji = "🟢" if "OPEN" in status_upper or "SCHEDULED" in status_upper else "🔴"
+                                results.append(f"{emoji} **{park}**: {status_candidate}")
+                                break
+                    break
+        
+        return "\n".join(results)
+    except Exception as e:
+        return f"⚠️ Scraper Error: {e}"
 
 if __name__ == "__main__":
     WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
@@ -65,7 +51,7 @@ if __name__ == "__main__":
     park_summary = get_park_data()
     
     if not park_summary:
-        park_summary = "⚠️ **Update:** The city's status document is currently unreachable. [Check Manually](https://columbusrecparks.com/facilities/rentals/sports/field-conditions/)"
+        park_summary = "⚠️ **Update:** Field data found, but status keywords were missing."
 
     content = (
         "🏟️ **LIVE FIELD CONDITIONS**\n"
