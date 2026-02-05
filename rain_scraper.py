@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import os
+import time
 
 # 1. Config
 URL = "https://columbusrecparks.com/facilities/rentals/sports/field-conditions/"
@@ -36,4 +37,5 @@ if MESSAGE_ID:
 else:
     # POST new message (do this once to get your ID)
     r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
+
     print(f"FIRST RUN: Copy this ID and add it to GitHub Secrets as MESSAGE_ID: {r.json()['id']}")
