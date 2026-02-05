@@ -1,12 +1,13 @@
-name: Field Status Scraper
+name: Field Status Screenshot Scraper
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Runs every 30 minutes
-  workflow_dispatch:      # Allows you to click "Run workflow" manually
+    # This runs the bot every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows you to trigger it manually for testing
 
 jobs:
-  scrape:
+  scrape_and_post:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -20,14 +21,15 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright requests beautifulsoup4
+          pip install playwright requests
 
-      - name: Install Playwright Browser
-        # This is the magic line that installs the actual browser
+      - name: Install Playwright Chromium
+        # Required to take the screenshot; --with-deps installs Linux system libraries
         run: playwright install chromium --with-deps
 
       - name: Run Scraper
         env:
+          # These must match the names in your GitHub Settings > Secrets > Actions
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
         run: python rain_scraper.py
