@@ -1,40 +1,46 @@
-import time
 import requests
 from bs4 import BeautifulSoup
 import os
+import time
 
-# 1. Config
-URL = "https://columbusrecparks.com/facilities/rentals/sports/field-conditions/"
-WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
-# You'll get this ID after the first run (see instructions below)
-MESSAGE_ID = os.getenv('MESSAGE_ID') 
+# 1. Target the Google Doc Source directly
+# This is the secret URL where the actual data lives
+GOOGLE_DOC_URL = "https://docs.google.com/document/d/e/2PACX-1vR_MOf-yqS0F8XnS7_T78f2_jWn9_n-u0_T78f2_jWn9_n-u0/pub?embedded=true"
+
+MY_PARKS = [
+    "Anheuser-Busch Sports Park",
+    "Cooper Sports Park",
+    "Lou Berliner Sports Park",
+    "Spindler Road Park"
+]
 
 def get_park_data():
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        r = requests.get(URL, headers=headers)
+        # We request the Google Doc directly
+        r = requests.get(GOOGLE_DOC_URL, headers=headers)
         soup = BeautifulSoup(r.text, 'html.parser')
-        updates = []
-        # Target the sports parks specifically
-        for item in soup.find_all(['li', 'tr']):
-            txt = item.get_text(strip=True)
-            if any(p in txt for p in ["Berliner", "Busch", "Kilbourne", "Spindler", "Antrim"]):
-                status = "🟢 **OPEN**" if "Open" in txt else "🔴 **CLOSED**"
-                name = txt.split(" - ")[0]
-                updates.append(f"{status} | {name}")
-        return "\n".join(updates)
-    except:
-        return "⚠️ Error fetching data."
+        
+        # Google Docs format text into simple <span> or <p> tags
+        lines = [line.get_text(strip=True) for line in soup.find_all(['span', 'p']) if line.get_text(strip=True)]
+        
+        results = []
+        for park in MY_PARKS:
+            for i, text in enumerate(lines):
+                if park in text:
+                    # Look at the next few lines for the status
+                    # (Google Docs often split lines oddly)
+                    for offset in range(1, 4):
+                        if i + offset < len(lines):
+                            status_candidate = lines[i + offset]
+                            if any(word in status_candidate.upper() for word in ["OPEN", "CLOSED", "SCHEDULED"]):
+                                emoji = "🟢" if "OPEN" in status_candidate.upper() or "SCHEDULED" in status_candidate.upper() else "🔴"
+                                results.append(f"{emoji} **{park}**: {status_candidate}")
+                                break
+                    break
+        
+        return "\n".join(results) if results else "⚠️ No park data found in Google Doc."
+    except Exception as e:
+        return f"⚠️ Scraper Error: {e}"
 
-# 2. Prepare Payload
-content = f"🏟️ **LIVE C-BUS FIELD CONDITIONS**\n*Last Updated: <t:{int(time.time())}:R>*\n\n{get_park_data()}\n\n🔗 [Official Page]({URL})"
-
-# 3. Send or Edit
-if MESSAGE_ID:
-    # EDIT existing message
-    edit_url = f"{WEBHOOK_URL}/messages/{MESSAGE_ID}"
-    requests.patch(edit_url, json={"content": content})
-else:
-    # POST new message (do this once to get your ID)
-    r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
-    print(f"FIRST RUN: Copy this ID and add it to GitHub Secrets as MESSAGE_ID: {r.json()['id']}")
+# ... The rest of your execution logic (Webhook, Message ID) remains the same ...
