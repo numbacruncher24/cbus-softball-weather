@@ -3,67 +3,40 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-# Shortened names for better matching
-MY_PARKS = ["Anheuser-Busch", "Cooper", "Berliner", "Spindler"]
-
-def get_park_data():
+def get_full_sheet_text():
     with sync_playwright() as p:
-        # 1. Launch a real browser (headless)
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        
+        page = browser.new_page(viewport={'width': 1280, 'height': 800})
         try:
-            # 2. Go to the main City Website
             page.goto("https://columbusrecparks.com/facilities/rentals/sports/field-conditions/", wait_until="networkidle")
-            
-            # 3. Wait for the iframe to exist on the page
-            page.wait_for_selector("iframe", timeout=15000)
-            
-            # 4. Target the Google Sheet iframe specifically
-            # This 'flattens' the iframe so we can see the text inside
+            page.wait_for_selector("iframe")
             frame = page.frame_locator("iframe").first
             
-            # 5. Get all the text content inside that specific frame
-            content = frame.locator("body").inner_text()
-            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            # Wait for the data to load
+            frame.get_by_text("Sports").wait_for(state="visible", timeout=20000)
             
+            # Grab EVERYTHING inside the sheet
+            full_content = frame.locator("body").inner_text()
             browser.close()
-            
-            results = []
-            for park in MY_PARKS:
-                for i, line in enumerate(lines):
-                    if park.lower() in line.lower():
-                        # Scrape the status from the lines immediately following the park name
-                        for offset in range(1, 4):
-                            if i + offset < len(lines):
-                                status_candidate = lines[i + offset]
-                                status_upper = status_candidate.upper()
-                                if any(word in status_upper for word in ["OPEN", "CLOSED", "SCHEDULED", "SEASON"]):
-                                    emoji = "🟢" if "OPEN" in status_upper or "SCHEDULED" in status_upper else "🔴"
-                                    results.append(f"{emoji} **{park}**: {status_candidate}")
-                                    break
-                        break
-            
-            return "\n".join(results)
-            
+            return full_content
         except Exception as e:
             if browser: browser.close()
-            return f"⚠️ Iframe Error: {e}"
+            return f"⚠️ Error loading sheet: {e}"
 
 if __name__ == "__main__":
     WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK')
     MESSAGE_ID = os.getenv('MESSAGE_ID')
     
-    park_summary = get_park_data()
-    
-    if not park_summary:
-        park_summary = "⚠️ **Update:** Connected to website, but couldn't see the data inside the window."
+    all_text = get_full_sheet_text()
 
+    # Discord has a 2000 character limit per message
+    # We trim it just in case the sheet is massive
     content = (
-        "🏟️ **LIVE FIELD CONDITIONS**\n"
-        f"Last Checked: <t:{int(time.time())}:R>\n\n"
-        f"{park_summary}\n\n"
-        "🔗 [Official Status Page](https://columbusrecparks.com/facilities/rentals/sports/field-conditions/)"
+        "🏟️ **FULL FIELD STATUS SHEET**\n"
+        f"Last Checked: <t:{int(time.time())}:R>\n"
+        "```\n"
+        f"{all_text[:1500]}" 
+        "\n```"
     )
 
     if MESSAGE_ID:
@@ -71,4 +44,4 @@ if __name__ == "__main__":
     else:
         r = requests.post(f"{WEBHOOK_URL}?wait=true", json={"content": content})
         if r.status_code == 200:
-            print(f"SUCCESS! New Message ID: {r.json()['id']}")
+            print(f"New Message ID: {r.json()['id']}")
